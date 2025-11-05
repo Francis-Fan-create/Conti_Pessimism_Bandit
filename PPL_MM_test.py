@@ -184,7 +184,42 @@ class PolicyNetwork(nn.Module):
         a = 2.0 * a_raw - 1.0
         return a
 
-# --- 3. TRAINING ALGORITHM (PPL-MM) (No changes) ---
+# --- 3. TRAINING ALGORITHMS ---
+def train_policy_naive_pg(policy, data, lr=1e-4, n_steps=2000):
+    """
+    Naive Policy Gradient: Directly optimize on observed rewards without
+    importance weighting or pessimism. This is the most basic baseline.
+    """
+    optimizer = optim.Adam(policy.parameters(), lr=lr)
+    X, A, R, Mu = data
+    
+    X_tensor = torch.tensor(X, dtype=torch.float32)
+    A_tensor = torch.tensor(A, dtype=torch.float32).view(-1, 1)
+    R_tensor = torch.tensor(R, dtype=torch.float32).view(-1, 1)
+    
+    history = {
+        "step": [],
+        "loss": [],
+    }
+    
+    for step in range(n_steps):
+        log_probs = policy(X_tensor, A_tensor)
+        
+        # Naive PG: maximize log_prob * R directly (no importance weighting)
+        loss = -torch.mean(log_probs * R_tensor)
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        if (step + 1) % 200 == 0:
+            history["step"].append(step + 1)
+            history["loss"].append(loss.item())
+            print(f"  [Naive PG Step {step+1}/{n_steps}] Loss: {loss.item():.4f}")
+    
+    return history
+
+
 def train_policy_mm(policy, data, is_pessimistic, beta_pessimism, 
                     lr=1e-4, n_mm_steps=10, n_pg_steps_per_mm=200, clip_val=20.0):
     """
@@ -309,17 +344,67 @@ def evaluate_policy_stats(policy, env, n_test_samples=5000, n_mc_samples=20):
         "action_variance": action_var,
     }
 
+
+def sweep_beta_pessimism(policy_template, data, env, beta_candidates, 
+                         lr=1e-4, n_mm_steps=10, n_pg_steps_per_mm=200, 
+                         n_test_samples=5000):
+    """
+    Sweep over beta_pessimism values and return the best performing policy and its beta.
+    """
+    best_beta = None
+    best_value = float('-inf')
+    best_policy = None
+    best_history = None
+    
+    print(f"\n--- Sweeping BETA_PESSIMISM over {beta_candidates} ---")
+    
+    for beta in beta_candidates:
+        print(f"\nTrying BETA_PESSIMISM = {beta}")
+        
+        # Create fresh policy with same initialization
+        candidate_policy = PolicyNetwork(policy_template.net[0].in_features, 1)
+        candidate_policy.load_state_dict(policy_template.state_dict())
+        
+        # Train with this beta
+        history = train_policy_mm(
+            candidate_policy,
+            data,
+            is_pessimistic=True,
+            beta_pessimism=beta,
+            lr=lr,
+            n_mm_steps=n_mm_steps,
+            n_pg_steps_per_mm=n_pg_steps_per_mm
+        )
+        
+        # Evaluate
+        metrics = evaluate_policy_stats(candidate_policy, env, n_test_samples=n_test_samples)
+        value = metrics["deterministic_value"]
+        
+        print(f"  --> Deterministic Value: {value:.4f}")
+        
+        if value > best_value:
+            best_value = value
+            best_beta = beta
+            best_policy = candidate_policy
+            best_history = history
+    
+    print(f"\n*** Best BETA_PESSIMISM: {best_beta} with value {best_value:.4f} ***")
+    
+    return best_policy, best_beta, best_history, best_value
+
+
 # --- 4. MAIN EXECUTION (Revised) ---
 if __name__ == "__main__":
     
     # --- Hyperparameters ---
-    N_OFFLINE_SAMPLES = 2000
+    N_OFFLINE_SAMPLES = 10000  # Substantially increased from 2000
     N_TEST_SAMPLES = 10000
     CONTEXT_DIM = 5
     ACTION_DIM = 1
     POLICY_LR = 1e-4
     
-    BETA_PESSIMISM = 0.5 
+    # Sweep range for beta pessimism
+    BETA_CANDIDATES = [0.1, 0.3, 0.5, 0.7, 1.0]
     N_MM_STEPS = 10         
     N_PG_STEPS_PER_MM = 200 
     N_PG_STEPS_GREEDY = N_MM_STEPS * N_PG_STEPS_PER_MM # Match total compute
@@ -344,12 +429,15 @@ if __name__ == "__main__":
         offline_data = env.get_offline_data(N_OFFLINE_SAMPLES)
         print(f"Generated {N_OFFLINE_SAMPLES} offline data points for {bench_id}.")
 
+        # Create three policies with same initialization
         greedy_policy = PolicyNetwork(CONTEXT_DIM, ACTION_DIM)
-        ppl_policy = PolicyNetwork(CONTEXT_DIM, ACTION_DIM)
-        ppl_policy.load_state_dict(greedy_policy.state_dict())
+        naive_pg_policy = PolicyNetwork(CONTEXT_DIM, ACTION_DIM)
+        naive_pg_policy.load_state_dict(greedy_policy.state_dict())
+        ppl_template_policy = PolicyNetwork(CONTEXT_DIM, ACTION_DIM)
+        ppl_template_policy.load_state_dict(greedy_policy.state_dict())
 
         # --- Training ---
-        print("\n--- Training Greedy Policy (Baseline) ---")
+        print("\n--- Training Greedy Policy (Baseline 1) ---")
         greedy_history = train_policy_mm(
             greedy_policy, 
             offline_data, 
@@ -360,36 +448,54 @@ if __name__ == "__main__":
             n_pg_steps_per_mm=N_PG_STEPS_GREEDY
         )
         
-        print("\n--- Training Pessimistic Policy (PPL-MM) ---")
-        ppl_history = train_policy_mm(
-            ppl_policy, 
-            offline_data, 
-            is_pessimistic=True,
-            beta_pessimism=BETA_PESSIMISM,
+        print("\n--- Training Naive Policy Gradient (Baseline 2) ---")
+        naive_pg_history = train_policy_naive_pg(
+            naive_pg_policy,
+            offline_data,
+            lr=POLICY_LR,
+            n_steps=N_PG_STEPS_GREEDY
+        )
+        
+        print("\n--- Training Pessimistic Policy (PPL-MM) with Beta Sweep ---")
+        ppl_policy, best_beta, ppl_history, ppl_sweep_value = sweep_beta_pessimism(
+            ppl_template_policy,
+            offline_data,
+            env,
+            BETA_CANDIDATES,
             lr=POLICY_LR,
             n_mm_steps=N_MM_STEPS,
-            n_pg_steps_per_mm=N_PG_STEPS_PER_MM
+            n_pg_steps_per_mm=N_PG_STEPS_PER_MM,
+            n_test_samples=N_TEST_SAMPLES
         )
 
         # --- Evaluation ---
         print(f"\n--- Evaluating Policies for {bench_id} ---")
         greedy_metrics = evaluate_policy_stats(greedy_policy, env, n_test_samples=N_TEST_SAMPLES)
+        naive_pg_metrics = evaluate_policy_stats(naive_pg_policy, env, n_test_samples=N_TEST_SAMPLES)
         ppl_metrics = evaluate_policy_stats(ppl_policy, env, n_test_samples=N_TEST_SAMPLES)
         val_greedy = greedy_metrics["deterministic_value"]
+        val_naive_pg = naive_pg_metrics["deterministic_value"]
         val_ppl = ppl_metrics["deterministic_value"]
         
         print("\n--- Results ---")
         print(f"True Value of Greedy Policy: {val_greedy:.4f}")
-        print(f"True Value of PPL-MM Policy: {val_ppl:.4f}")
+        print(f"True Value of Naive PG Policy: {val_naive_pg:.4f}")
+        print(f"True Value of PPL-MM Policy (beta={best_beta}): {val_ppl:.4f}")
         print(f"Stochastic Value (mean ± std) Greedy: {greedy_metrics['stochastic_mean']:.4f} ± {greedy_metrics['stochastic_std']:.4f}")
+        print(f"Stochastic Value (mean ± std) Naive PG: {naive_pg_metrics['stochastic_mean']:.4f} ± {naive_pg_metrics['stochastic_std']:.4f}")
         print(f"Stochastic Value (mean ± std) PPL-MM: {ppl_metrics['stochastic_mean']:.4f} ± {ppl_metrics['stochastic_std']:.4f}")
         print(f"Action variance Greedy: {greedy_metrics['action_variance']:.4e}")
+        print(f"Action variance Naive PG: {naive_pg_metrics['action_variance']:.4e}")
         print(f"Action variance PPL-MM: {ppl_metrics['action_variance']:.4e}")
 
-        if val_ppl > val_greedy:
-            print("\nPPL-MM successfully found a better policy.")
+        if val_ppl > val_greedy and val_ppl > val_naive_pg:
+            print(f"\n✓ PPL-MM successfully outperformed both baselines!")
+        elif val_ppl > val_greedy:
+            print(f"\n✓ PPL-MM outperformed Greedy but not Naive PG.")
+        elif val_ppl > val_naive_pg:
+            print(f"\n✓ PPL-MM outperformed Naive PG but not Greedy.")
         else:
-            print("\nPPL-MM did not outperform the greedy policy in this run.")
+            print("\n✗ PPL-MM did not outperform the baselines in this run.")
 
         # --- Visualization ---
         mm_steps = np.array(ppl_history["mm_step"])
@@ -400,14 +506,19 @@ if __name__ == "__main__":
 
         fig, axes = plt.subplots(1, 3, figsize=(18, 4))
 
-        x_pos = np.arange(2)
+        # Plot 1: Three-way comparison
+        x_pos = np.arange(3)
         bar_width = 0.35
-        det_values = [greedy_metrics["deterministic_value"], ppl_metrics["deterministic_value"]]
-        stoch_values = [greedy_metrics["stochastic_mean"], ppl_metrics["stochastic_mean"]]
+        det_values = [greedy_metrics["deterministic_value"], 
+                      naive_pg_metrics["deterministic_value"], 
+                      ppl_metrics["deterministic_value"]]
+        stoch_values = [greedy_metrics["stochastic_mean"], 
+                        naive_pg_metrics["stochastic_mean"], 
+                        ppl_metrics["stochastic_mean"]]
         axes[0].bar(x_pos - bar_width/2, det_values, bar_width, label="Deterministic")
         axes[0].bar(x_pos + bar_width/2, stoch_values, bar_width, label="Stochastic")
         axes[0].set_xticks(x_pos)
-        axes[0].set_xticklabels(["Greedy", "PPL-MM"])
+        axes[0].set_xticklabels(["Greedy", "Naive PG", f"PPL-MM\n(β={best_beta})"])
         axes[0].set_ylabel("True Reward")
         axes[0].set_title("Policy Value Comparison")
         axes[0].legend()
@@ -442,9 +553,12 @@ if __name__ == "__main__":
 
         benchmark_results[bench_id] = {
             "greedy_metrics": greedy_metrics,
+            "naive_pg_metrics": naive_pg_metrics,
             "ppl_metrics": ppl_metrics,
             "greedy_history": greedy_history,
+            "naive_pg_history": naive_pg_history,
             "ppl_history": ppl_history,
+            "best_beta": best_beta,
             "n_offline": len(offline_data[0]),
             "plot_path": str(plot_path),
         }
@@ -452,9 +566,13 @@ if __name__ == "__main__":
         summary_rows.append({
             "benchmark": bench_id,
             "greedy_det": val_greedy,
+            "naive_pg_det": val_naive_pg,
             "ppl_det": val_ppl,
-            "delta_det": val_ppl - val_greedy,
+            "best_beta": best_beta,
+            "delta_vs_greedy": val_ppl - val_greedy,
+            "delta_vs_naive": val_ppl - val_naive_pg,
             "greedy_stoch": greedy_metrics["stochastic_mean"],
+            "naive_pg_stoch": naive_pg_metrics["stochastic_mean"],
             "ppl_stoch": ppl_metrics["stochastic_mean"],
             "ppl_stoch_std": ppl_metrics["stochastic_std"],
             "ppl_action_var": ppl_metrics["action_variance"],
@@ -463,16 +581,18 @@ if __name__ == "__main__":
         })
 
     print("\n================ SUMMARY ===============")
-    header = f"{'Benchmark':<28}{'Greedy':>12}{'PPL-MM':>12}{'Gain':>12}{'ESS_min':>12}{'Wstd_max':>12}"
+    header = f"{'Benchmark':<28}{'Greedy':>12}{'Naive PG':>12}{'PPL-MM':>12}{'Beta':>8}{'Δ(G)':>10}{'Δ(N)':>10}"
     print(header)
+    print("="*98)
     for row in summary_rows:
         print(
             f"{row['benchmark']:<28}"
             f"{row['greedy_det']:>12.4f}"
+            f"{row['naive_pg_det']:>12.4f}"
             f"{row['ppl_det']:>12.4f}"
-            f"{row['delta_det']:>12.4f}"
-            f"{row['min_ess_ratio']:>12.3f}"
-            f"{row['max_weight_std']:>12.3f}"
+            f"{row['best_beta']:>8.2f}"
+            f"{row['delta_vs_greedy']:>10.4f}"
+            f"{row['delta_vs_naive']:>10.4f}"
         )
 
     metrics_path = results_dir / "benchmark_metrics.json"
@@ -480,3 +600,12 @@ if __name__ == "__main__":
         json.dump(benchmark_results, f, indent=2)
     print(f"\nSaved detailed metrics to {metrics_path}")
     print(f"Saved per-benchmark plots to {results_dir}")
+    
+    # Print overall statistics
+    print("\n================ OVERALL STATISTICS ===============")
+    wins_vs_greedy = sum(1 for row in summary_rows if row['delta_vs_greedy'] > 0)
+    wins_vs_naive = sum(1 for row in summary_rows if row['delta_vs_naive'] > 0)
+    wins_vs_both = sum(1 for row in summary_rows if row['delta_vs_greedy'] > 0 and row['delta_vs_naive'] > 0)
+    print(f"PPL-MM outperformed Greedy in {wins_vs_greedy}/{len(summary_rows)} benchmarks")
+    print(f"PPL-MM outperformed Naive PG in {wins_vs_naive}/{len(summary_rows)} benchmarks")
+    print(f"PPL-MM outperformed BOTH baselines in {wins_vs_both}/{len(summary_rows)} benchmarks")
