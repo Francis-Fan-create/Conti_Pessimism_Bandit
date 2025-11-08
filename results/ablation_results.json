@@ -41,34 +41,44 @@
           "action_variance": 0.004205132834613323
         }
       },
-      "5. PPL (This paper)": {
-        "value": 0.5715967416763306,
-        "best_beta": 0.01,
+      "5. PPL (pure)": {
+        "value": 0.6272974610328674,
+        "best_beta": 0.5,
         "metrics": {
-          "deterministic_value": 0.5715967416763306,
-          "stochastic_mean": 0.5068641304969788,
-          "stochastic_std": 0.38254836201667786,
-          "action_variance": 0.004200166091322899
+          "deterministic_value": 0.6272974610328674,
+          "stochastic_mean": 0.575332522392273,
+          "stochastic_std": 0.36785823106765747,
+          "action_variance": 0.0027624221984297037
         }
       },
       "6. PPL (no clamping)": {
-        "value": 0.568505048751831,
-        "best_beta": 0.2,
+        "value": 0.5597965121269226,
+        "best_beta": 0.0,
         "metrics": {
-          "deterministic_value": 0.568505048751831,
-          "stochastic_mean": 0.5062349438667297,
-          "stochastic_std": 0.38203635811805725,
-          "action_variance": 0.004147680476307869
+          "deterministic_value": 0.5597965121269226,
+          "stochastic_mean": 0.4967147409915924,
+          "stochastic_std": 0.38386449217796326,
+          "action_variance": 0.004217687528580427
         }
       },
       "7. PPL (no clipping)": {
-        "value": 0.6273688673973083,
+        "value": 0.6267746686935425,
         "best_beta": 0.5,
         "metrics": {
-          "deterministic_value": 0.6273688673973083,
-          "stochastic_mean": 0.5756604075431824,
-          "stochastic_std": 0.3682633638381958,
-          "action_variance": 0.0027299870271235704
+          "deterministic_value": 0.6267746686935425,
+          "stochastic_mean": 0.5767327547073364,
+          "stochastic_std": 0.3684583306312561,
+          "action_variance": 0.002751875203102827
+        }
+      },
+      "8. PPL (Both)": {
+        "value": 0.5695385336875916,
+        "best_beta": 0.5,
+        "metrics": {
+          "deterministic_value": 0.5695385336875916,
+          "stochastic_mean": 0.5066567063331604,
+          "stochastic_std": 0.38233548402786255,
+          "action_variance": 0.004158135037869215
         }
       }
     },
@@ -78,73 +88,83 @@
   "SafetyConstrainedReward": {
     "config_results": {
       "1. Naive PG": {
-        "value": 0.6900919675827026,
+        "value": 0.6636041402816772,
         "best_beta": 0,
         "metrics": {
-          "deterministic_value": 0.6900919675827026,
-          "stochastic_mean": 0.685219943523407,
-          "stochastic_std": 0.22888696193695068,
-          "action_variance": 0.0011919810203835368
+          "deterministic_value": 0.6636041402816772,
+          "stochastic_mean": 0.6596294045448303,
+          "stochastic_std": 0.23735076189041138,
+          "action_variance": 0.0011902765836566687
         }
       },
       "2. Clamped": {
-        "value": 0.9158869385719299,
+        "value": 0.9593676924705505,
         "best_beta": 0,
         "metrics": {
-          "deterministic_value": 0.9158869385719299,
-          "stochastic_mean": 0.9055177569389343,
-          "stochastic_std": 0.1108354777097702,
-          "action_variance": 0.0008147018379531801
+          "deterministic_value": 0.9593676924705505,
+          "stochastic_mean": 0.9458637237548828,
+          "stochastic_std": 0.06668802350759506,
+          "action_variance": 0.0009267787099815905
         }
       },
       "3. Clipped": {
-        "value": 0.9148784279823303,
+        "value": 0.9594679474830627,
         "best_beta": 0,
         "metrics": {
-          "deterministic_value": 0.9148784279823303,
-          "stochastic_mean": 0.9046797156333923,
-          "stochastic_std": 0.11206291615962982,
-          "action_variance": 0.0008268157253041863
+          "deterministic_value": 0.9594679474830627,
+          "stochastic_mean": 0.9458158016204834,
+          "stochastic_std": 0.0671827420592308,
+          "action_variance": 0.0009263955871574581
         }
       },
       "4. Clamped + Clipped": {
-        "value": 0.913623034954071,
+        "value": 0.9590644240379333,
         "best_beta": 0,
         "metrics": {
-          "deterministic_value": 0.913623034954071,
-          "stochastic_mean": 0.9034134149551392,
-          "stochastic_std": 0.11302866041660309,
-          "action_variance": 0.0008141064899973571
+          "deterministic_value": 0.9590644240379333,
+          "stochastic_mean": 0.9454492926597595,
+          "stochastic_std": 0.06720815598964691,
+          "action_variance": 0.0009246525005437434
         }
       },
-      "5. PPL (This paper)": {
-        "value": 0.9322243332862854,
-        "best_beta": 0.5,
+      "5. PPL (pure)": {
+        "value": 0.958648145198822,
+        "best_beta": 0.2,
         "metrics": {
-          "deterministic_value": 0.9322243332862854,
-          "stochastic_mean": 0.9197428226470947,
-          "stochastic_std": 0.09701422601938248,
-          "action_variance": 0.0009229772840626538
+          "deterministic_value": 0.958648145198822,
+          "stochastic_mean": 0.9451296329498291,
+          "stochastic_std": 0.06820806860923767,
+          "action_variance": 0.0009435780812054873
         }
       },
       "6. PPL (no clamping)": {
-        "value": 0.9324339628219604,
-        "best_beta": 0.5,
+        "value": 0.9595223665237427,
+        "best_beta": 0.3,
         "metrics": {
-          "deterministic_value": 0.9324339628219604,
-          "stochastic_mean": 0.9200862646102905,
-          "stochastic_std": 0.09697748720645905,
-          "action_variance": 0.0009204770904034376
+          "deterministic_value": 0.9595223665237427,
+          "stochastic_mean": 0.9456295371055603,
+          "stochastic_std": 0.06676267087459564,
+          "action_variance": 0.0009508627117611468
         }
       },
       "7. PPL (no clipping)": {
-        "value": 0.9332889914512634,
-        "best_beta": 0.5,
+        "value": 0.9580152630805969,
+        "best_beta": 0.15,
         "metrics": {
-          "deterministic_value": 0.9332889914512634,
-          "stochastic_mean": 0.9209646582603455,
-          "stochastic_std": 0.09729257971048355,
-          "action_variance": 0.0009185016388073564
+          "deterministic_value": 0.9580152630805969,
+          "stochastic_mean": 0.9444848299026489,
+          "stochastic_std": 0.06840886920690536,
+          "action_variance": 0.0009314939379692078
+        }
+      },
+      "8. PPL (Both)": {
+        "value": 0.9594947099685669,
+        "best_beta": 0.2,
+        "metrics": {
+          "deterministic_value": 0.9594947099685669,
+          "stochastic_mean": 0.9456982612609863,
+          "stochastic_std": 0.06737947463989258,
+          "action_variance": 0.0009456768166273832
         }
       }
     },
@@ -154,73 +174,83 @@
   "SparseRewardWithNoise": {
     "config_results": {
       "1. Naive PG": {
-        "value": 0.37882357835769653,
+        "value": 0.22796083986759186,
         "best_beta": 0,
         "metrics": {
-          "deterministic_value": 0.37882357835769653,
-          "stochastic_mean": 0.3587740659713745,
-          "stochastic_std": 0.31008338928222656,
-          "action_variance": 0.00312634464353323
+          "deterministic_value": 0.22796083986759186,
+          "stochastic_mean": 0.2041580080986023,
+          "stochastic_std": 0.28895366191864014,
+          "action_variance": 0.023667747154831886
         }
       },
       "2. Clamped": {
-        "value": 0.7388115525245667,
+        "value": 0.7916844487190247,
         "best_beta": 0,
         "metrics": {
-          "deterministic_value": 0.7388115525245667,
-          "stochastic_mean": 0.6671563386917114,
-          "stochastic_std": 0.20863176882266998,
-          "action_variance": 0.0014009125297889113
+          "deterministic_value": 0.7916844487190247,
+          "stochastic_mean": 0.6319165825843811,
+          "stochastic_std": 0.22241394221782684,
+          "action_variance": 0.0029657145496457815
         }
       },
       "3. Clipped": {
-        "value": 0.7393516302108765,
+        "value": 0.7935643792152405,
         "best_beta": 0,
         "metrics": {
-          "deterministic_value": 0.7393516302108765,
-          "stochastic_mean": 0.6662564277648926,
-          "stochastic_std": 0.20922482013702393,
-          "action_variance": 0.0014040115056559443
+          "deterministic_value": 0.7935643792152405,
+          "stochastic_mean": 0.6327540874481201,
+          "stochastic_std": 0.2221793383359909,
+          "action_variance": 0.002979411045089364
         }
       },
       "4. Clamped + Clipped": {
-        "value": 0.7399179339408875,
+        "value": 0.7918834686279297,
         "best_beta": 0,
         "metrics": {
-          "deterministic_value": 0.7399179339408875,
-          "stochastic_mean": 0.6668451428413391,
-          "stochastic_std": 0.20895379781723022,
-          "action_variance": 0.001394699327647686
+          "deterministic_value": 0.7918834686279297,
+          "stochastic_mean": 0.6329298615455627,
+          "stochastic_std": 0.22217950224876404,
+          "action_variance": 0.0029460815712809563
         }
       },
-      "5. PPL (This paper)": {
-        "value": 0.7411907315254211,
-        "best_beta": 0.5,
+      "5. PPL (pure)": {
+        "value": 0.7966088652610779,
+        "best_beta": 0.3,
         "metrics": {
-          "deterministic_value": 0.7411907315254211,
-          "stochastic_mean": 0.6648960113525391,
-          "stochastic_std": 0.20942078530788422,
-          "action_variance": 0.001442901324480772
+          "deterministic_value": 0.7966088652610779,
+          "stochastic_mean": 0.632732629776001,
+          "stochastic_std": 0.22272273898124695,
+          "action_variance": 0.0029600225389003754
         }
       },
       "6. PPL (no clamping)": {
-        "value": 0.7399384379386902,
-        "best_beta": 0.3,
+        "value": 0.7965482473373413,
+        "best_beta": 0.5,
         "metrics": {
-          "deterministic_value": 0.7399384379386902,
-          "stochastic_mean": 0.6664440631866455,
-          "stochastic_std": 0.20819851756095886,
-          "action_variance": 0.0014197720447555184
+          "deterministic_value": 0.7965482473373413,
+          "stochastic_mean": 0.6327722668647766,
+          "stochastic_std": 0.22211620211601257,
+          "action_variance": 0.002975480630993843
         }
       },
       "7. PPL (no clipping)": {
-        "value": 0.7410122752189636,
+        "value": 0.795627236366272,
         "best_beta": 0.5,
         "metrics": {
-          "deterministic_value": 0.7410122752189636,
-          "stochastic_mean": 0.6666746139526367,
-          "stochastic_std": 0.2082693874835968,
-          "action_variance": 0.0014303699135780334
+          "deterministic_value": 0.795627236366272,
+          "stochastic_mean": 0.6322341561317444,
+          "stochastic_std": 0.2226840704679489,
+          "action_variance": 0.0029943776316940784
+        }
+      },
+      "8. PPL (Both)": {
+        "value": 0.7976789474487305,
+        "best_beta": 0.5,
+        "metrics": {
+          "deterministic_value": 0.7976789474487305,
+          "stochastic_mean": 0.633349597454071,
+          "stochastic_std": 0.22148942947387695,
+          "action_variance": 0.002971724607050419
         }
       }
     },

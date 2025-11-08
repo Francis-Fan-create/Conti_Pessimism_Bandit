@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.distributions as dist
 import numpy as np
+from scipy import stats
 
 # Set random seed for reproducibility
 torch.manual_seed(42)
@@ -269,7 +270,7 @@ ABLATION_CONFIGS = {
     "3. Clipped": TrainingConfig(
         name="Clipped",
         beta_pessimism=0,
-        C_clip=50.0,  # Increase from 20 to be less aggressive
+        C_clip=50.0,
         epsilon_mu=1e-12,  # Just avoid division by zero, not real clamping
         use_importance_weighting=True,
         description="Importance weighting with weight clipping only"
@@ -277,26 +278,26 @@ ABLATION_CONFIGS = {
     "4. Clamped + Clipped": TrainingConfig(
         name="Clamped+Clipped",
         beta_pessimism=0,
-        C_clip=50.0,  # Increase from 20
+        C_clip=50.0,
         epsilon_mu=1e-6,
         use_importance_weighting=True,
         description="Importance weighting with both clamping and clipping"
     ),
-    "5. PPL (This paper)": TrainingConfig(
-        name="PPL (paper)",
+    "5. PPL (pure)": TrainingConfig(
+        name="PPL (pure)",
         beta_pessimism=None,  # Will sweep
-        C_clip=50.0,  # Increase from 20
-        epsilon_mu=1e-6,
+        C_clip=float('inf'),
+        epsilon_mu=0,
         use_importance_weighting=True,
-        description="Full PPL-MM with pessimism, clamping, and clipping"
+        description="Pure PPL-MM with only pessimism, no clipping or clamping"
     ),
     "6. PPL (no clamping)": TrainingConfig(
         name="PPL (no clamp)",
         beta_pessimism=None,  # Will sweep
-        C_clip=50.0,  # Increase from 20
+        C_clip=50.0,
         epsilon_mu=0,
         use_importance_weighting=True,
-        description="PPL-MM without behavior policy clamping"
+        description="PPL-MM with pessimism and clipping, no clamping"
     ),
     "7. PPL (no clipping)": TrainingConfig(
         name="PPL (no clip)",
@@ -304,7 +305,15 @@ ABLATION_CONFIGS = {
         C_clip=float('inf'),
         epsilon_mu=1e-6,
         use_importance_weighting=True,
-        description="PPL-MM without importance weight clipping"
+        description="PPL-MM with pessimism and clamping, no clipping"
+    ),
+    "8. PPL (Both)": TrainingConfig(
+        name="PPL (paper)",
+        beta_pessimism=None,  # Will sweep
+        C_clip=50.0,
+        epsilon_mu=1e-6,
+        use_importance_weighting=True,
+        description="Full PPL-MM with pessimism, clamping, and clipping"
     ),
 }
 
@@ -715,7 +724,7 @@ if __name__ == "__main__":
 
         # Plot 2: Show PPL training dynamics for the BEST PPL variant
         # Find which PPL variant performed best
-        ppl_keys = ["5. PPL (This paper)", "6. PPL (no clamping)", "7. PPL (no clipping)"]
+        ppl_keys = ["5. PPL (pure)", "6. PPL (no clamping)", "7. PPL (no clipping)", "8. PPL (Both)"]
         best_ppl_key = max(ppl_keys, key=lambda k: config_results[k]["value"])
         best_ppl_result = config_results[best_ppl_key]
         
@@ -802,8 +811,16 @@ if __name__ == "__main__":
     print("="*120)
     
     config_win_counts = {k: 0 for k in ABLATION_CONFIGS.keys()}
-    ppl_family_keys = ["5. PPL (This paper)", "6. PPL (no clamping)", "7. PPL (no clipping)"]
+    ppl_family_keys = ["5. PPL (pure)", "6. PPL (no clamping)", "7. PPL (no clipping)", "8. PPL (Both)"]
     ppl_family_wins = 0
+    
+    # Collect all values for statistical analysis
+    all_values = {k: [] for k in ABLATION_CONFIGS.keys()}
+    for row in summary_rows:
+        for config_key in ABLATION_CONFIGS.keys():
+            col_name = config_key.split(".")[1].strip().replace(" ", "_").replace("(", "").replace(")", "").lower()
+            value = row.get(col_name, float('nan'))
+            all_values[config_key].append(value)
     
     for row in summary_rows:
         # Find best config for this benchmark
@@ -825,13 +842,25 @@ if __name__ == "__main__":
         wins = config_win_counts[config_key]
         is_ppl = config_key in ppl_family_keys
         marker = "🔵 PPL" if is_ppl else "⚪ Baseline"
-        print(f"  {marker} {config_key}: {wins}/{len(summary_rows)} benchmarks")
+        avg_val = np.mean(all_values[config_key])
+        print(f"  {marker} {config_key}: {wins}/{len(summary_rows)} wins (avg={avg_val:.4f})")
     
     # Analyze PPL family performance
     print(f"\n{'='*120}")
     print("PPL FAMILY PERFORMANCE")
     print(f"{'='*120}")
-    print(f"PPL variants (with β > 0) won: {ppl_family_wins}/{len(summary_rows)} benchmarks")
+    
+    # Win rate analysis with binomial confidence interval
+    n_benchmarks = len(summary_rows)
+    ppl_win_rate = ppl_family_wins / n_benchmarks
+    # Wilson score interval for binomial proportion
+    from scipy import stats
+    ci_low, ci_high = stats.binom.interval(0.95, n_benchmarks, ppl_win_rate)
+    ci_low = ci_low / n_benchmarks
+    ci_high = ci_high / n_benchmarks
+    
+    print(f"PPL variants (with β > 0) won: {ppl_family_wins}/{n_benchmarks} benchmarks")
+    print(f"Win rate: {ppl_win_rate:.1%} (95% CI: [{ci_low:.1%}, {ci_high:.1%}])")
     
     if ppl_family_wins == len(summary_rows):
         print("   ✅ SUCCESS: PPL family (with pessimism) outperformed ALL baselines on every benchmark!")
@@ -839,6 +868,88 @@ if __name__ == "__main__":
         print("   ⚠️  PARTIAL: PPL family won majority but not all benchmarks")
     else:
         print("   ❌ FAILURE: PPL family did not demonstrate clear advantages")
+    
+    # Effect size analysis: compare best PPL vs best baseline
+    ppl_values = []
+    baseline_values = []
+    baseline_keys = ["1. Naive PG", "2. Clamped", "3. Clipped", "4. Clamped + Clipped"]
+    
+    for row in summary_rows:
+        # Get best PPL value for this benchmark
+        ppl_vals = []
+        for k in ppl_family_keys:
+            col_name = k.split(".")[1].strip().replace(" ", "_").replace("(", "").replace(")", "").lower()
+            ppl_vals.append(row.get(col_name, float('-inf')))
+        ppl_values.append(max(ppl_vals))
+        
+        # Get best baseline value for this benchmark
+        baseline_vals = []
+        for k in baseline_keys:
+            col_name = k.split(".")[1].strip().replace(" ", "_").replace("(", "").replace(")", "").lower()
+            baseline_vals.append(row.get(col_name, float('-inf')))
+        baseline_values.append(max(baseline_vals))
+    
+    ppl_mean = np.mean(ppl_values)
+    baseline_mean = np.mean(baseline_values)
+    improvement = ((ppl_mean - baseline_mean) / baseline_mean) * 100
+    
+    # Cohen's d effect size
+    pooled_std = np.sqrt((np.std(ppl_values)**2 + np.std(baseline_values)**2) / 2)
+    cohens_d = (ppl_mean - baseline_mean) / pooled_std if pooled_std > 0 else 0
+    
+    print(f"\nEffect Size Analysis:")
+    print(f"  Best PPL avg: {ppl_mean:.4f}")
+    print(f"  Best Baseline avg: {baseline_mean:.4f}")
+    print(f"  Improvement: {improvement:+.2f}%")
+    print(f"  Cohen's d: {cohens_d:.3f} ({'small' if abs(cohens_d) < 0.5 else 'medium' if abs(cohens_d) < 0.8 else 'large'})")
+    
+    # Paired t-test
+    t_stat, p_value = stats.ttest_rel(ppl_values, baseline_values)
+    print(f"  Paired t-test: t={t_stat:.3f}, p={p_value:.4f} {'***' if p_value < 0.001 else '**' if p_value < 0.01 else '*' if p_value < 0.05 else '(n.s.)'}")
+    
+    # Component analysis: isolate effects of clipping, clamping, pessimism
+    print(f"\n{'='*120}")
+    print("COMPONENT ANALYSIS")
+    print(f"{'='*120}")
+    
+    # Effect of pessimism (compare configs with/without pessimism, same regularization)
+    print("\n1. Effect of Pessimism (β > 0):")
+    
+    # Pure pessimism: PPL (pure) vs Naive PG
+    ppl_pure_vals = all_values["5. PPL (pure)"]
+    naive_vals = all_values["1. Naive PG"]
+    pess_improvement = ((np.mean(ppl_pure_vals) - np.mean(naive_vals)) / np.mean(naive_vals)) * 100
+    print(f"   PPL (pure) vs Naive PG: {pess_improvement:+.2f}% improvement")
+    
+    # With clipping: PPL (no clamp) vs Clipped
+    ppl_noclamp_vals = all_values["6. PPL (no clamping)"]
+    clipped_vals = all_values["3. Clipped"]
+    pess_clip_improvement = ((np.mean(ppl_noclamp_vals) - np.mean(clipped_vals)) / np.mean(clipped_vals)) * 100
+    print(f"   PPL (no clamp) vs Clipped: {pess_clip_improvement:+.2f}% improvement")
+    
+    # With clamping: PPL (no clip) vs Clamped
+    ppl_noclip_vals = all_values["7. PPL (no clipping)"]
+    clamped_vals = all_values["2. Clamped"]
+    pess_clamp_improvement = ((np.mean(ppl_noclip_vals) - np.mean(clamped_vals)) / np.mean(clamped_vals)) * 100
+    print(f"   PPL (no clip) vs Clamped: {pess_clamp_improvement:+.2f}% improvement")
+    
+    print("\n2. Effect of Clipping:")
+    # With pessimism: PPL (no clip) vs PPL (pure)
+    clip_ppl_improvement = ((np.mean(ppl_noclip_vals) - np.mean(ppl_pure_vals)) / np.mean(ppl_pure_vals)) * 100
+    print(f"   With pessimism: {clip_ppl_improvement:+.2f}% (PPL no clip vs PPL pure)")
+    
+    # Without pessimism: Clipped vs Naive PG  
+    clip_base_improvement = ((np.mean(clipped_vals) - np.mean(naive_vals)) / np.mean(naive_vals)) * 100
+    print(f"   Without pessimism: {clip_base_improvement:+.2f}% (Clipped vs Naive PG)")
+    
+    print("\n3. Effect of Clamping:")
+    # With pessimism: PPL (no clamp) vs PPL (pure)
+    clamp_ppl_improvement = ((np.mean(ppl_noclamp_vals) - np.mean(ppl_pure_vals)) / np.mean(ppl_pure_vals)) * 100
+    print(f"   With pessimism: {clamp_ppl_improvement:+.2f}% (PPL no clamp vs PPL pure)")
+    
+    # Without pessimism: Clamped vs Naive PG
+    clamp_base_improvement = ((np.mean(clamped_vals) - np.mean(naive_vals)) / np.mean(naive_vals)) * 100
+    print(f"   Without pessimism: {clamp_base_improvement:+.2f}% (Clamped vs Naive PG)")
     
     # Show optimal beta values chosen
     print(f"\n{'='*120}")
@@ -855,5 +966,116 @@ if __name__ == "__main__":
                 value = row[col_name]
                 config_name = config_key.split(".")[1].strip()
                 print(f"  {config_name:20s}: β = {beta_val:.2f}, value = {value:.4f}")
+    
+    # === ADVANCED VISUALIZATIONS ===
+    print(f"\n{'='*120}")
+    print("GENERATING ADVANCED VISUALIZATIONS")
+    print(f"{'='*120}")
+    
+    # Visualization 1: Heatmap of all configs × benchmarks
+    fig, axes = plt.subplots(2, 2, figsize=(20, 14))
+    
+    # Heatmap data
+    config_names_short = [k.split(".")[1].strip() for k in ABLATION_CONFIGS.keys()]
+    bench_names = [row["benchmark"] for row in summary_rows]
+    heatmap_data = []
+    for config_key in ABLATION_CONFIGS.keys():
+        row_data = []
+        for row in summary_rows:
+            col_name = config_key.split(".")[1].strip().replace(" ", "_").replace("(", "").replace(")", "").lower()
+            row_data.append(row.get(col_name, 0))
+        heatmap_data.append(row_data)
+    heatmap_data = np.array(heatmap_data)
+    
+    # Plot 1: Heatmap
+    im = axes[0, 0].imshow(heatmap_data, cmap='YlOrRd', aspect='auto')
+    axes[0, 0].set_xticks(np.arange(len(bench_names)))
+    axes[0, 0].set_yticks(np.arange(len(config_names_short)))
+    axes[0, 0].set_xticklabels(bench_names, rotation=45, ha='right')
+    axes[0, 0].set_yticklabels(config_names_short)
+    
+    # Add values and mark winners
+    for i in range(len(config_names_short)):
+        for j in range(len(bench_names)):
+            value = heatmap_data[i, j]
+            is_best = (value == heatmap_data[:, j].max())
+            text_color = 'white' if value > heatmap_data.mean() else 'black'
+            axes[0, 0].text(j, i, f'{value:.3f}', ha='center', va='center', 
+                          color=text_color, fontweight='bold' if is_best else 'normal',
+                          fontsize=9)
+    
+    axes[0, 0].set_title("Performance Heatmap: All Configurations × Benchmarks", fontsize=12, fontweight='bold')
+    plt.colorbar(im, ax=axes[0, 0])
+    
+    # Plot 2: Win rate comparison with confidence intervals
+    baseline_wins = [config_win_counts[k] for k in baseline_keys]
+    ppl_wins = [config_win_counts[k] for k in ppl_family_keys]
+    
+    x_baseline = np.arange(len(baseline_keys))
+    x_ppl = np.arange(len(ppl_family_keys))
+    
+    axes[0, 1].bar(x_baseline, baseline_wins, color='lightcoral', alpha=0.7, label='Baselines')
+    axes[0, 1].bar(x_ppl + len(baseline_keys) + 0.5, ppl_wins, color='skyblue', alpha=0.7, label='PPL Family')
+    
+    # Create tick positions and labels (without separator)
+    all_tick_positions = list(range(len(baseline_keys))) + [len(baseline_keys) + 0.5 + i for i in range(len(ppl_family_keys))]
+    all_labels = [k.split(".")[1].strip() for k in baseline_keys] + [k.split(".")[1].strip() for k in ppl_family_keys]
+    axes[0, 1].set_xticks(all_tick_positions)
+    axes[0, 1].set_xticklabels(all_labels, rotation=45, ha='right')
+    axes[0, 1].set_ylabel('Number of Wins')
+    axes[0, 1].set_title('Win Count by Configuration', fontsize=12, fontweight='bold')
+    axes[0, 1].legend()
+    axes[0, 1].axhline(n_benchmarks / 2, color='red', linestyle='--', linewidth=1, label='50% threshold')
+    axes[0, 1].grid(axis='y', alpha=0.3)
+    
+    # Plot 3: Component effects (bar chart with error bars)
+    components = ['Pessimism\n(pure)', 'Pessimism\n(+clip)', 'Pessimism\n(+clamp)', 'Clipping', 'Clamping']
+    effects = [pess_improvement, pess_clip_improvement, pess_clamp_improvement, 
+               clip_base_improvement, clamp_base_improvement]
+    colors = ['#2E86AB', '#2E86AB', '#2E86AB', '#A23B72', '#F18F01']
+    
+    bars = axes[1, 0].bar(components, effects, color=colors, alpha=0.7)
+    axes[1, 0].axhline(0, color='black', linewidth=0.8)
+    axes[1, 0].set_ylabel('Performance Improvement (%)')
+    axes[1, 0].set_title('Component Analysis: Isolated Effects', fontsize=12, fontweight='bold')
+    axes[1, 0].grid(axis='y', alpha=0.3)
+    
+    # Add value labels on bars
+    for bar, effect in zip(bars, effects):
+        height = bar.get_height()
+        axes[1, 0].text(bar.get_x() + bar.get_width()/2., height,
+                       f'{effect:+.1f}%', ha='center', va='bottom' if height > 0 else 'top',
+                       fontweight='bold', fontsize=10)
+    
+    # Plot 4: PPL family comparison (grouped bar chart)
+    ppl_avgs = [np.mean(all_values[k]) for k in ppl_family_keys]
+    ppl_stds = [np.std(all_values[k]) for k in ppl_family_keys]
+    ppl_labels = [k.split(".")[1].strip() for k in ppl_family_keys]
+    
+    x_pos = np.arange(len(ppl_family_keys))
+    axes[1, 1].bar(x_pos, ppl_avgs, yerr=ppl_stds, capsize=5, color='skyblue', alpha=0.7, edgecolor='navy')
+    axes[1, 1].set_xticks(x_pos)
+    axes[1, 1].set_xticklabels(ppl_labels, rotation=45, ha='right')
+    axes[1, 1].set_ylabel('Average Performance')
+    axes[1, 1].set_title('PPL Family: Average Performance ± Std Dev', fontsize=12, fontweight='bold')
+    axes[1, 1].grid(axis='y', alpha=0.3)
+    
+    # Add significance stars
+    best_ppl_idx = np.argmax(ppl_avgs)
+    for i, avg in enumerate(ppl_avgs):
+        if i != best_ppl_idx:
+            # Simple comparison (could use t-test for proper significance)
+            diff = abs(ppl_avgs[best_ppl_idx] - avg)
+            if diff > 0.02:  # Threshold for "significant"
+                axes[1, 1].text(i, avg + ppl_stds[i] + 0.01, '*', ha='center', fontsize=16)
+    
+    fig.suptitle('Comprehensive Ablation Study Analysis', fontsize=16, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    
+    comprehensive_plot_path = results_dir / "comprehensive_analysis.png"
+    fig.savefig(comprehensive_plot_path, dpi=200, bbox_inches='tight')
+    plt.close(fig)
+    
+    print(f"Saved comprehensive analysis plot to {comprehensive_plot_path}")
     
     print("\n" + "="*120)
