@@ -1,0 +1,230 @@
+{
+  "BiasedBehaviorSharpPeak": {
+    "config_results": {
+      "1. Naive PG": {
+        "value": 0.48468148708343506,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.48468148708343506,
+          "stochastic_mean": 0.39037027955055237,
+          "stochastic_std": 0.3753967583179474,
+          "action_variance": 0.018269618973135948
+        }
+      },
+      "2. Clamped": {
+        "value": 0.5728121399879456,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.5728121399879456,
+          "stochastic_mean": 0.5390790700912476,
+          "stochastic_std": 0.38636207580566406,
+          "action_variance": 0.0018929073121398687
+        }
+      },
+      "3. Clipped": {
+        "value": 0.5653797388076782,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.5653797388076782,
+          "stochastic_mean": 0.501767098903656,
+          "stochastic_std": 0.3820980489253998,
+          "action_variance": 0.004241999704390764
+        }
+      },
+      "4. Clamped + Clipped": {
+        "value": 0.5720364451408386,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.5720364451408386,
+          "stochastic_mean": 0.5071589946746826,
+          "stochastic_std": 0.38221296668052673,
+          "action_variance": 0.004205132834613323
+        }
+      },
+      "5. PPL (This paper)": {
+        "value": 0.5715967416763306,
+        "best_beta": 0.01,
+        "metrics": {
+          "deterministic_value": 0.5715967416763306,
+          "stochastic_mean": 0.5068641304969788,
+          "stochastic_std": 0.38254836201667786,
+          "action_variance": 0.004200166091322899
+        }
+      },
+      "6. PPL (no clamping)": {
+        "value": 0.568505048751831,
+        "best_beta": 0.2,
+        "metrics": {
+          "deterministic_value": 0.568505048751831,
+          "stochastic_mean": 0.5062349438667297,
+          "stochastic_std": 0.38203635811805725,
+          "action_variance": 0.004147680476307869
+        }
+      },
+      "7. PPL (no clipping)": {
+        "value": 0.6273688673973083,
+        "best_beta": 0.5,
+        "metrics": {
+          "deterministic_value": 0.6273688673973083,
+          "stochastic_mean": 0.5756604075431824,
+          "stochastic_std": 0.3682633638381958,
+          "action_variance": 0.0027299870271235704
+        }
+      }
+    },
+    "n_offline": 10000,
+    "plot_path": "results\\BiasedBehaviorSharpPeak_ablation.png"
+  },
+  "SafetyConstrainedReward": {
+    "config_results": {
+      "1. Naive PG": {
+        "value": 0.6900919675827026,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.6900919675827026,
+          "stochastic_mean": 0.685219943523407,
+          "stochastic_std": 0.22888696193695068,
+          "action_variance": 0.0011919810203835368
+        }
+      },
+      "2. Clamped": {
+        "value": 0.9158869385719299,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.9158869385719299,
+          "stochastic_mean": 0.9055177569389343,
+          "stochastic_std": 0.1108354777097702,
+          "action_variance": 0.0008147018379531801
+        }
+      },
+      "3. Clipped": {
+        "value": 0.9148784279823303,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.9148784279823303,
+          "stochastic_mean": 0.9046797156333923,
+          "stochastic_std": 0.11206291615962982,
+          "action_variance": 0.0008268157253041863
+        }
+      },
+      "4. Clamped + Clipped": {
+        "value": 0.913623034954071,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.913623034954071,
+          "stochastic_mean": 0.9034134149551392,
+          "stochastic_std": 0.11302866041660309,
+          "action_variance": 0.0008141064899973571
+        }
+      },
+      "5. PPL (This paper)": {
+        "value": 0.9322243332862854,
+        "best_beta": 0.5,
+        "metrics": {
+          "deterministic_value": 0.9322243332862854,
+          "stochastic_mean": 0.9197428226470947,
+          "stochastic_std": 0.09701422601938248,
+          "action_variance": 0.0009229772840626538
+        }
+      },
+      "6. PPL (no clamping)": {
+        "value": 0.9324339628219604,
+        "best_beta": 0.5,
+        "metrics": {
+          "deterministic_value": 0.9324339628219604,
+          "stochastic_mean": 0.9200862646102905,
+          "stochastic_std": 0.09697748720645905,
+          "action_variance": 0.0009204770904034376
+        }
+      },
+      "7. PPL (no clipping)": {
+        "value": 0.9332889914512634,
+        "best_beta": 0.5,
+        "metrics": {
+          "deterministic_value": 0.9332889914512634,
+          "stochastic_mean": 0.9209646582603455,
+          "stochastic_std": 0.09729257971048355,
+          "action_variance": 0.0009185016388073564
+        }
+      }
+    },
+    "n_offline": 10000,
+    "plot_path": "results\\SafetyConstrainedReward_ablation.png"
+  },
+  "SparseRewardWithNoise": {
+    "config_results": {
+      "1. Naive PG": {
+        "value": 0.37882357835769653,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.37882357835769653,
+          "stochastic_mean": 0.3587740659713745,
+          "stochastic_std": 0.31008338928222656,
+          "action_variance": 0.00312634464353323
+        }
+      },
+      "2. Clamped": {
+        "value": 0.7388115525245667,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.7388115525245667,
+          "stochastic_mean": 0.6671563386917114,
+          "stochastic_std": 0.20863176882266998,
+          "action_variance": 0.0014009125297889113
+        }
+      },
+      "3. Clipped": {
+        "value": 0.7393516302108765,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.7393516302108765,
+          "stochastic_mean": 0.6662564277648926,
+          "stochastic_std": 0.20922482013702393,
+          "action_variance": 0.0014040115056559443
+        }
+      },
+      "4. Clamped + Clipped": {
+        "value": 0.7399179339408875,
+        "best_beta": 0,
+        "metrics": {
+          "deterministic_value": 0.7399179339408875,
+          "stochastic_mean": 0.6668451428413391,
+          "stochastic_std": 0.20895379781723022,
+          "action_variance": 0.001394699327647686
+        }
+      },
+      "5. PPL (This paper)": {
+        "value": 0.7411907315254211,
+        "best_beta": 0.5,
+        "metrics": {
+          "deterministic_value": 0.7411907315254211,
+          "stochastic_mean": 0.6648960113525391,
+          "stochastic_std": 0.20942078530788422,
+          "action_variance": 0.001442901324480772
+        }
+      },
+      "6. PPL (no clamping)": {
+        "value": 0.7399384379386902,
+        "best_beta": 0.3,
+        "metrics": {
+          "deterministic_value": 0.7399384379386902,
+          "stochastic_mean": 0.6664440631866455,
+          "stochastic_std": 0.20819851756095886,
+          "action_variance": 0.0014197720447555184
+        }
+      },
+      "7. PPL (no clipping)": {
+        "value": 0.7410122752189636,
+        "best_beta": 0.5,
+        "metrics": {
+          "deterministic_value": 0.7410122752189636,
+          "stochastic_mean": 0.6666746139526367,
+          "stochastic_std": 0.2082693874835968,
+          "action_variance": 0.0014303699135780334
+        }
+      }
+    },
+    "n_offline": 10000,
+    "plot_path": "results\\SparseRewardWithNoise_ablation.png"
+  }
+}

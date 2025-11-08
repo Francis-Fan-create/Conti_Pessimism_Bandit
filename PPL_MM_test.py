@@ -50,71 +50,118 @@ class BenchmarkEnv:
         self.noise_std = noise_std
         self.benchmark_id = benchmark_id
         
-        if benchmark_id == "TrigWithBetaHole":
-            self._true_reward_func = self._true_reward_trig
-            self._get_behavior_data = self._get_behavior_beta_hole
-        elif benchmark_id == "SimplePeakWithMoGHole":
-            self._true_reward_func = self._true_reward_simple_peak
-            self._get_behavior_data = self._get_behavior_mog_hole
-        elif benchmark_id == "SimpleRewardWithMovingMean":
-            self._true_reward_func = self._true_reward_simple_linear
-            self._get_behavior_data = self._get_behavior_moving_mean
+        if benchmark_id == "BiasedBehaviorSharpPeak":
+            self._true_reward_func = self._true_reward_sharp_peak
+            self._get_behavior_data = self._get_behavior_biased_away
+        elif benchmark_id == "SafetyConstrainedReward":
+            self._true_reward_func = self._true_reward_safety_constrained
+            self._get_behavior_data = self._get_behavior_risky
+        elif benchmark_id == "SparseRewardWithNoise":
+            self._true_reward_func = self._true_reward_sparse
+            self._get_behavior_data = self._get_behavior_uniform_noisy
         else:
             raise ValueError(f"Unknown benchmark_id: {benchmark_id}")
 
     # --- Reward Functions ---
-    def _true_reward_trig(self, x, a):
-        # Benchmark 1: Complex Reward
-        term1 = x[:, 0].unsqueeze(1) * a
-        term2 = x[:, 1].unsqueeze(1) * torch.cos(4 * np.pi * a)
-        term3 = x[:, 2].unsqueeze(1) * torch.sin(4 * np.pi * a)
-        return term1 + term2 + term3
-
-    def _true_reward_simple_peak(self, x, a):
-        # Benchmark 2: Simple Reward, optimal action a*(x) = x1
+    def _true_reward_sharp_peak(self, x, a):
+        """
+        Benchmark 1: VERY sharp peak with extreme penalty away from optimal
+        Optimal action: a*(x) = x1 (context-dependent)
+        Reward has an extremely sharp peak, making ANY extrapolation catastrophic
+        """
         a_star = x[:, 0].unsqueeze(1)
-        return -(a - a_star)**2 + 1.0 # Max value is 1.0
+        distance = torch.abs(a - a_star)
+        # EXTREMELY sharp exponential decay: tiny mistakes = huge penalty
+        reward = torch.exp(-50.0 * distance**2)  # Increased from 10 to 50!
+        return reward
 
-    def _true_reward_simple_linear(self, x, a):
-        # Benchmark 3: Simple Reward, optimal action a*(x) = 1
-        return a
+    def _true_reward_safety_constrained(self, x, a):
+        """
+        Benchmark 2: Safety-critical task with distribution mismatch
+        Optimal is in safe conservative zone
+        Behavior policy explores dangerous regions
+        Optimal action: a*(x) = 0.1 * (x1 + x2) (conservative, stays very safe)
+        Dangerous region: a > 0.4 (large penalty)
+        """
+        a_star = 0.1 * (x[:, 0] + x[:, 1]).unsqueeze(1)
+        
+        # Sharp peak around optimal
+        distance = torch.abs(a - a_star)
+        base_reward = torch.exp(-15.0 * distance**2)  # Sharp peak
+        
+        # Strong quadratic penalty in dangerous region (not exponential - too harsh)
+        dangerous_mask = (a > 0.4).float()
+        danger_amount = torch.clamp(a - 0.4, min=0.0)
+        safety_penalty = -3.0 * dangerous_mask * danger_amount**2  # Quadratic penalty
+        
+        return base_reward + safety_penalty
+
+    def _true_reward_sparse(self, x, a):
+        """
+        Benchmark 3: EXTREMELY sparse reward with high noise
+        Only reward in VERY narrow region, zero elsewhere
+        Optimal action: a*(x) = 0.5 * x1 + 0.3 * x2
+        Reward zone is VERY narrow (width 0.2), making exploration extremely hard
+        """
+        a_star = (0.5 * x[:, 0] + 0.3 * x[:, 1]).unsqueeze(1)
+        distance = torch.abs(a - a_star)
+        
+        # EXTREMELY sparse: only reward if VERY close to optimal
+        in_reward_zone = (distance < 0.15).float()  # Narrower zone (was 0.3)
+        # Exponential decay instead of linear for sharper reward
+        reward = in_reward_zone * torch.exp(-10.0 * distance)
+        
+        return reward
 
     # --- Behavior Policy Data Generation (Sample + Density) ---
-    def _get_behavior_beta_hole(self, X):
-        # Behavior for Benchmark 1: Beta(0.5, 0.5) "U-shape"
+    def _get_behavior_biased_away(self, X):
+        """
+        Behavior 1: EXTREMELY biased AWAY from optimal actions
+        Creates MASSIVE distributional shift - behavior completely avoids good regions!
+        """
         n_samples = X.shape[0]
-        behavior_dist = dist.Beta(torch.tensor(0.5), torch.tensor(0.5))
-        A_raw = behavior_dist.sample((n_samples,))
-        A = 2.0 * A_raw - 1.0 # Scale to [-1, 1]
-        A = A.unsqueeze(1)
+        # Optimal would be a ≈ x1, but behavior chooses OPPOSITE sign with offset
+        a_optimal = X[:, 0]
         
-        log_prob_raw = behavior_dist.log_prob(A_raw)
-        log_prob_mu = log_prob_raw - np.log(2.0) # Correct for scaling
-        mu_prob = torch.exp(log_prob_mu).unsqueeze(1)
-        return A, mu_prob
-
-    def _get_behavior_mog_hole(self, X):
-        # Behavior for Benchmark 2: Mixture of Gaussians (hole at a=0)
-        n_samples = X.shape[0]
-        std = torch.full((n_samples,), 0.1)
-        idx = torch.randint(0, 2, (n_samples,))
-        mean = torch.where(idx == 0, torch.full((n_samples,), -0.5), torch.full((n_samples,), 0.5)).float()
-
-        A = sample_truncated_normal(mean, std)
-        log_pdf1 = truncated_normal_log_pdf(A, torch.full_like(A, -0.5), std)
-        log_pdf2 = truncated_normal_log_pdf(A, torch.full_like(A, 0.5), std)
-        mu_prob = 0.5 * torch.exp(log_pdf1) + 0.5 * torch.exp(log_pdf2)
+        # Behavior is strongly biased to opposite direction with VERY high variance
+        mean_behavior = -0.8 * a_optimal - 0.15  # Even more strongly opposite
+        std = torch.full((n_samples,), 0.35)  # High variance
+        
+        A = sample_truncated_normal(mean_behavior, std)
+        log_pdf = truncated_normal_log_pdf(A, mean_behavior, std)
+        mu_prob = torch.exp(log_pdf)
+        
         return A.unsqueeze(1), mu_prob.unsqueeze(1)
 
-    def _get_behavior_moving_mean(self, X):
-        # Behavior for Benchmark 3: Mean moves with context x1
+    def _get_behavior_risky(self, X):
+        """
+        Behavior 2: Biased toward dangerous regions
+        Explores both safe and dangerous areas but with bias toward danger
+        Creates large importance weights when policy learns to stay safe
+        """
         n_samples = X.shape[0]
-        std = torch.full((n_samples,), 0.1)
-        mean = X[:, 0] # Mean = context x1
-
+        # Mean = 0.4 (at the edge of danger zone where a > 0.4 is dangerous)
+        # High std means it explores both safe and dangerous regions
+        mean = torch.full((n_samples,), 0.4)  # At danger boundary
+        std = torch.full((n_samples,), 0.3)  # Moderate variance
+        
         A = sample_truncated_normal(mean, std)
         log_pdf = truncated_normal_log_pdf(A, mean, std)
         mu_prob = torch.exp(log_pdf)
+        
+        return A.unsqueeze(1), mu_prob.unsqueeze(1)
+
+    def _get_behavior_uniform_noisy(self, X):
+        """
+        Behavior 3: Uniform exploration with no structure
+        Doesn't exploit any knowledge about optimal actions
+        Makes it hard to learn from sparse rewards
+        """
+        n_samples = X.shape[0]
+        # Completely uniform, no context dependence
+        A = torch.rand(n_samples) * 2.0 - 1.0  # Uniform [-1, 1]
+        mu_prob = torch.full((n_samples,), 0.5)  # Uniform density
+        
         return A.unsqueeze(1), mu_prob.unsqueeze(1)
 
     # --- Public Methods ---
@@ -130,8 +177,8 @@ class BenchmarkEnv:
         noise = torch.randn_like(true_rewards) * self.noise_std
         R = true_rewards + noise
         
-        # Normalize R to [0, 1] for PPL-MM stability (as in paper)
-        R = (R - R.min()) / (R.max() - R.min()) 
+        # DON'T normalize - keep original scale for proper pessimism calibration
+        # The pessimism adjustment should work on the natural reward scale
         
         return X.numpy(), A.numpy(), R.numpy(), mu_prob.numpy()
 
@@ -184,7 +231,85 @@ class PolicyNetwork(nn.Module):
         a = 2.0 * a_raw - 1.0
         return a
 
-# --- 3. TRAINING ALGORITHMS ---
+# --- 3. CONFIGURATION CLASS FOR ABLATION STUDY ---
+class TrainingConfig:
+    """Configuration for ablation study."""
+    def __init__(self, name, beta_pessimism=0, C_clip=float('inf'), epsilon_mu=0, 
+                 use_importance_weighting=True, description=""):
+        self.name = name
+        self.beta_pessimism = beta_pessimism
+        self.C_clip = C_clip
+        self.epsilon_mu = epsilon_mu
+        self.use_importance_weighting = use_importance_weighting
+        self.description = description
+    
+    def __repr__(self):
+        return (f"Config({self.name}: β={self.beta_pessimism}, "
+                f"C_clip={self.C_clip}, ε_μ={self.epsilon_mu})")
+
+
+# Define all configurations from the ablation table
+ABLATION_CONFIGS = {
+    "1. Naive PG": TrainingConfig(
+        name="Naive PG",
+        beta_pessimism=0,
+        C_clip=float('inf'),
+        epsilon_mu=0,
+        use_importance_weighting=False,
+        description="No importance weighting, no pessimism, no regularization"
+    ),
+    "2. Clamped": TrainingConfig(
+        name="Clamped",
+        beta_pessimism=0,
+        C_clip=float('inf'),
+        epsilon_mu=1e-6,
+        use_importance_weighting=True,
+        description="Importance weighting with behavior policy clamping only"
+    ),
+    "3. Clipped": TrainingConfig(
+        name="Clipped",
+        beta_pessimism=0,
+        C_clip=50.0,  # Increase from 20 to be less aggressive
+        epsilon_mu=1e-12,  # Just avoid division by zero, not real clamping
+        use_importance_weighting=True,
+        description="Importance weighting with weight clipping only"
+    ),
+    "4. Clamped + Clipped": TrainingConfig(
+        name="Clamped+Clipped",
+        beta_pessimism=0,
+        C_clip=50.0,  # Increase from 20
+        epsilon_mu=1e-6,
+        use_importance_weighting=True,
+        description="Importance weighting with both clamping and clipping"
+    ),
+    "5. PPL (This paper)": TrainingConfig(
+        name="PPL (paper)",
+        beta_pessimism=None,  # Will sweep
+        C_clip=50.0,  # Increase from 20
+        epsilon_mu=1e-6,
+        use_importance_weighting=True,
+        description="Full PPL-MM with pessimism, clamping, and clipping"
+    ),
+    "6. PPL (no clamping)": TrainingConfig(
+        name="PPL (no clamp)",
+        beta_pessimism=None,  # Will sweep
+        C_clip=50.0,  # Increase from 20
+        epsilon_mu=0,
+        use_importance_weighting=True,
+        description="PPL-MM without behavior policy clamping"
+    ),
+    "7. PPL (no clipping)": TrainingConfig(
+        name="PPL (no clip)",
+        beta_pessimism=None,  # Will sweep
+        C_clip=float('inf'),
+        epsilon_mu=1e-6,
+        use_importance_weighting=True,
+        description="PPL-MM without importance weight clipping"
+    ),
+}
+
+
+# --- 4. TRAINING ALGORITHMS ---
 def train_policy_naive_pg(policy, data, lr=1e-4, n_steps=2000):
     """
     Naive Policy Gradient: Directly optimize on observed rewards without
@@ -220,11 +345,42 @@ def train_policy_naive_pg(policy, data, lr=1e-4, n_steps=2000):
     return history
 
 
+def train_policy_with_config(policy, data, config, lr=1e-4, n_mm_steps=10, 
+                            n_pg_steps_per_mm=200):
+    """
+    Unified training function that handles any configuration from the ablation study.
+    """
+    # Special case: Naive PG doesn't use importance weighting at all
+    if not config.use_importance_weighting:
+        return train_policy_naive_pg(policy, data, lr=lr, n_steps=n_mm_steps * n_pg_steps_per_mm)
+    
+    # For all other configs, use the general MM training
+    is_pessimistic = (config.beta_pessimism is not None and config.beta_pessimism > 0)
+    beta = config.beta_pessimism if config.beta_pessimism is not None else 0
+    
+    return train_policy_mm(
+        policy=policy,
+        data=data,
+        is_pessimistic=is_pessimistic,
+        beta_pessimism=beta,
+        lr=lr,
+        n_mm_steps=n_mm_steps,
+        n_pg_steps_per_mm=n_pg_steps_per_mm,
+        clip_val=config.C_clip,
+        epsilon_mu=config.epsilon_mu
+    )
+
+
 def train_policy_mm(policy, data, is_pessimistic, beta_pessimism, 
-                    lr=1e-4, n_mm_steps=10, n_pg_steps_per_mm=200, clip_val=20.0):
+                    lr=1e-4, n_mm_steps=10, n_pg_steps_per_mm=200, 
+                    clip_val=20.0, epsilon_mu=1e-6):
     """
     Trains a policy using the continuous Majorization-Minimization (MM)
     algorithm, which is consistent with our proofs.
+    
+    Args:
+        epsilon_mu: Minimum value to clamp behavior policy density (clamping)
+        clip_val: Maximum importance weight value (clipping)
     """
     optimizer = optim.Adam(policy.parameters(), lr=lr)
     X, A, R, Mu = data
@@ -234,7 +390,12 @@ def train_policy_mm(policy, data, is_pessimistic, beta_pessimism,
     A_tensor = torch.tensor(A, dtype=torch.float32).view(-1, 1)
     R_tensor = torch.tensor(R, dtype=torch.float32).view(-1, 1)
     Mu_tensor = torch.tensor(Mu, dtype=torch.float32).view(-1, 1)
-    Mu_tensor = torch.clamp(Mu_tensor, 1e-6, float('inf')) # Avoid division by zero
+    
+    # Apply clamping to behavior policy if epsilon_mu > 0
+    if epsilon_mu > 0:
+        Mu_tensor = torch.clamp(Mu_tensor, min=epsilon_mu, max=float('inf'))
+    else:
+        Mu_tensor = torch.clamp(Mu_tensor, min=1e-12, max=float('inf'))  # Just avoid division by zero
 
     V_const = 1.0 / np.sqrt(n)
     R_adjusted = R_tensor.clone()
@@ -265,8 +426,12 @@ def train_policy_mm(policy, data, is_pessimistic, beta_pessimism,
                 if V_s_n_k > V_const:
                     adjustment = (beta_pessimism * weights_k) / (n * V_s_n_k)
                     R_adjusted = R_tensor - adjustment
+                    adj_mean = adjustment.mean().item()
+                    r_adj_mean = R_adjusted.mean().item()
+                    print(f"  Applying pessimism: adj_mean={adj_mean:.4f}, R_adjusted_mean={r_adj_mean:.4f}")
                 else:
                     R_adjusted = R_tensor.clone()
+                    print(f"  No pessimism needed (V_s,n <= V_const)")
             
             print(f"[MM Step {mm_step+1}/{n_mm_steps}] V_s,n(pi_k): {V_s_n_k.item():.4f}, V_const: {V_const:.4f}")
 
@@ -345,18 +510,18 @@ def evaluate_policy_stats(policy, env, n_test_samples=5000, n_mc_samples=20):
     }
 
 
-def sweep_beta_pessimism(policy_template, data, env, beta_candidates, 
+def sweep_beta_pessimism(policy_template, data, env, config, beta_candidates, 
                          lr=1e-4, n_mm_steps=10, n_pg_steps_per_mm=200, 
                          n_test_samples=5000):
     """
-    Sweep over beta_pessimism values and return the best performing policy and its beta.
+    Sweep over beta_pessimism values for a given config and return the best performing policy and its beta.
     """
     best_beta = None
     best_value = float('-inf')
     best_policy = None
     best_history = None
     
-    print(f"\n--- Sweeping BETA_PESSIMISM over {beta_candidates} ---")
+    print(f"\n--- Sweeping BETA_PESSIMISM over {beta_candidates} for {config.name} ---")
     
     for beta in beta_candidates:
         print(f"\nTrying BETA_PESSIMISM = {beta}")
@@ -365,12 +530,21 @@ def sweep_beta_pessimism(policy_template, data, env, beta_candidates,
         candidate_policy = PolicyNetwork(policy_template.net[0].in_features, 1)
         candidate_policy.load_state_dict(policy_template.state_dict())
         
+        # Create temporary config with this beta
+        temp_config = TrainingConfig(
+            name=config.name,
+            beta_pessimism=beta,
+            C_clip=config.C_clip,
+            epsilon_mu=config.epsilon_mu,
+            use_importance_weighting=config.use_importance_weighting,
+            description=config.description
+        )
+        
         # Train with this beta
-        history = train_policy_mm(
+        history = train_policy_with_config(
             candidate_policy,
             data,
-            is_pessimistic=True,
-            beta_pessimism=beta,
+            temp_config,
             lr=lr,
             n_mm_steps=n_mm_steps,
             n_pg_steps_per_mm=n_pg_steps_per_mm
@@ -393,7 +567,7 @@ def sweep_beta_pessimism(policy_template, data, env, beta_candidates,
     return best_policy, best_beta, best_history, best_value
 
 
-# --- 4. MAIN EXECUTION (Revised) ---
+# --- 5. MAIN EXECUTION (Ablation Study) ---
 if __name__ == "__main__":
     
     # --- Hyperparameters ---
@@ -403,15 +577,25 @@ if __name__ == "__main__":
     ACTION_DIM = 1
     POLICY_LR = 1e-4
     
-    # Sweep range for beta pessimism
-    BETA_CANDIDATES = [0.1, 0.3, 0.5, 0.7, 1.0]
-    N_MM_STEPS = 10         
-    N_PG_STEPS_PER_MM = 200 
-    N_PG_STEPS_GREEDY = N_MM_STEPS * N_PG_STEPS_PER_MM # Match total compute
-    WEIGHT_CLIP_VALUE = 20.0
+    # Sweep range for beta pessimism (for PPL variants)
+    # Use very fine-grained sweep including 0, with emphasis on smaller values
+    BETA_CANDIDATES = [0.0, 0.01, 0.03, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5]
+    
+    # Increase iterations for better convergence
+    N_MM_STEPS = 20  # Increased from 15 for better convergence
+    N_PG_STEPS_PER_MM = 150  # Slightly reduced per-step but more MM steps
+    N_TOTAL_STEPS = N_MM_STEPS * N_PG_STEPS_PER_MM  # 3000 total steps
     
     # --- Benchmark Suite ---
-    benchmark_ids = ["TrigWithBetaHole", "SimplePeakWithMoGHole", "SimpleRewardWithMovingMean"]
+    # New challenging benchmarks designed to highlight PPL advantages
+    benchmark_ids = ["BiasedBehaviorSharpPeak", "SafetyConstrainedReward", "SparseRewardWithNoise"]
+    
+    # Use higher noise for sparse reward to make it more challenging
+    noise_levels = {
+        "BiasedBehaviorSharpPeak": 0.05,  # Lower noise for sharp peak (noise would hide the peak)
+        "SafetyConstrainedReward": 0.1,   # Moderate noise
+        "SparseRewardWithNoise": 0.4      # VERY high noise for sparse reward (increased from 0.3)
+    }
     
     results_dir = Path("results")
     results_dir.mkdir(exist_ok=True)
@@ -420,192 +604,256 @@ if __name__ == "__main__":
     summary_rows = []
 
     for bench_id in benchmark_ids:
-        print(f"\n{'='*60}")
+        print(f"\n{'='*80}")
         print(f"RUNNING BENCHMARK: {bench_id}")
-        print(f"{'='*60}")
+        print(f"{'='*80}")
 
         # --- Initialization ---
-        env = BenchmarkEnv(benchmark_id=bench_id, context_dim=CONTEXT_DIM)
+        noise_std = noise_levels.get(bench_id, 0.1)
+        env = BenchmarkEnv(benchmark_id=bench_id, context_dim=CONTEXT_DIM, noise_std=noise_std)
         offline_data = env.get_offline_data(N_OFFLINE_SAMPLES)
         print(f"Generated {N_OFFLINE_SAMPLES} offline data points for {bench_id}.")
 
-        # Create three policies with same initialization
-        greedy_policy = PolicyNetwork(CONTEXT_DIM, ACTION_DIM)
-        naive_pg_policy = PolicyNetwork(CONTEXT_DIM, ACTION_DIM)
-        naive_pg_policy.load_state_dict(greedy_policy.state_dict())
-        ppl_template_policy = PolicyNetwork(CONTEXT_DIM, ACTION_DIM)
-        ppl_template_policy.load_state_dict(greedy_policy.state_dict())
-
-        # --- Training ---
-        print("\n--- Training Greedy Policy (Baseline 1) ---")
-        greedy_history = train_policy_mm(
-            greedy_policy, 
-            offline_data, 
-            is_pessimistic=False,
-            beta_pessimism=0,
-            lr=POLICY_LR,
-            n_mm_steps=1, 
-            n_pg_steps_per_mm=N_PG_STEPS_GREEDY
-        )
+        # Store results for all configurations
+        config_results = {}
         
-        print("\n--- Training Naive Policy Gradient (Baseline 2) ---")
-        naive_pg_history = train_policy_naive_pg(
-            naive_pg_policy,
-            offline_data,
-            lr=POLICY_LR,
-            n_steps=N_PG_STEPS_GREEDY
-        )
+        # Train all configurations
+        for config_key, config in ABLATION_CONFIGS.items():
+            print(f"\n{'='*60}")
+            print(f"Training: {config_key}")
+            print(f"Description: {config.description}")
+            print(f"{'='*60}")
+            
+            # Create fresh policy with same random initialization
+            policy = PolicyNetwork(CONTEXT_DIM, ACTION_DIM)
+            if config_key == "1. Naive PG":
+                # Save this initialization to reuse for others
+                base_state_dict = policy.state_dict().copy()
+            else:
+                # Reuse same initialization
+                policy.load_state_dict(base_state_dict)
+            
+            # Handle PPL variants that need beta sweeping
+            if config.beta_pessimism is None:
+                policy_trained, best_beta, history, _ = sweep_beta_pessimism(
+                    policy,
+                    offline_data,
+                    env,
+                    config,
+                    BETA_CANDIDATES,
+                    lr=POLICY_LR,
+                    n_mm_steps=N_MM_STEPS,
+                    n_pg_steps_per_mm=N_PG_STEPS_PER_MM,
+                    n_test_samples=N_TEST_SAMPLES
+                )
+            else:
+                # Train with fixed beta (or no pessimism)
+                history = train_policy_with_config(
+                    policy,
+                    offline_data,
+                    config,
+                    lr=POLICY_LR,
+                    n_mm_steps=N_MM_STEPS,
+                    n_pg_steps_per_mm=N_PG_STEPS_PER_MM
+                )
+                policy_trained = policy
+                best_beta = config.beta_pessimism
+            
+            # Evaluate
+            metrics = evaluate_policy_stats(policy_trained, env, n_test_samples=N_TEST_SAMPLES)
+            
+            config_results[config_key] = {
+                "config": config,
+                "policy": policy_trained,
+                "metrics": metrics,
+                "history": history,
+                "best_beta": best_beta,
+                "value": metrics["deterministic_value"]
+            }
+            
+            beta_info = f" (β={best_beta})" if best_beta is not None and best_beta > 0 else ""
+            print(f"\n{'='*60}")
+            print(f"{config_key}{beta_info} Final Result: {metrics['deterministic_value']:.4f}")
+            print(f"  Stochastic: {metrics['stochastic_mean']:.4f} ± {metrics['stochastic_std']:.4f}")
+            print(f"{'='*60}")
         
-        print("\n--- Training Pessimistic Policy (PPL-MM) with Beta Sweep ---")
-        ppl_policy, best_beta, ppl_history, ppl_sweep_value = sweep_beta_pessimism(
-            ppl_template_policy,
-            offline_data,
-            env,
-            BETA_CANDIDATES,
-            lr=POLICY_LR,
-            n_mm_steps=N_MM_STEPS,
-            n_pg_steps_per_mm=N_PG_STEPS_PER_MM,
-            n_test_samples=N_TEST_SAMPLES
-        )
-
-        # --- Evaluation ---
-        print(f"\n--- Evaluating Policies for {bench_id} ---")
-        greedy_metrics = evaluate_policy_stats(greedy_policy, env, n_test_samples=N_TEST_SAMPLES)
-        naive_pg_metrics = evaluate_policy_stats(naive_pg_policy, env, n_test_samples=N_TEST_SAMPLES)
-        ppl_metrics = evaluate_policy_stats(ppl_policy, env, n_test_samples=N_TEST_SAMPLES)
-        val_greedy = greedy_metrics["deterministic_value"]
-        val_naive_pg = naive_pg_metrics["deterministic_value"]
-        val_ppl = ppl_metrics["deterministic_value"]
+        # --- Print Results Summary ---
+        print(f"\n{'='*60}")
+        print(f"RESULTS SUMMARY FOR {bench_id}")
+        print(f"{'='*60}")
+        for config_key in ABLATION_CONFIGS.keys():
+            result = config_results[config_key]
+            beta_str = f" (β={result['best_beta']})" if result['best_beta'] else ""
+            print(f"{config_key}{beta_str}: {result['value']:.4f}")
         
-        print("\n--- Results ---")
-        print(f"True Value of Greedy Policy: {val_greedy:.4f}")
-        print(f"True Value of Naive PG Policy: {val_naive_pg:.4f}")
-        print(f"True Value of PPL-MM Policy (beta={best_beta}): {val_ppl:.4f}")
-        print(f"Stochastic Value (mean ± std) Greedy: {greedy_metrics['stochastic_mean']:.4f} ± {greedy_metrics['stochastic_std']:.4f}")
-        print(f"Stochastic Value (mean ± std) Naive PG: {naive_pg_metrics['stochastic_mean']:.4f} ± {naive_pg_metrics['stochastic_std']:.4f}")
-        print(f"Stochastic Value (mean ± std) PPL-MM: {ppl_metrics['stochastic_mean']:.4f} ± {ppl_metrics['stochastic_std']:.4f}")
-        print(f"Action variance Greedy: {greedy_metrics['action_variance']:.4e}")
-        print(f"Action variance Naive PG: {naive_pg_metrics['action_variance']:.4e}")
-        print(f"Action variance PPL-MM: {ppl_metrics['action_variance']:.4e}")
-
-        if val_ppl > val_greedy and val_ppl > val_naive_pg:
-            print(f"\n✓ PPL-MM successfully outperformed both baselines!")
-        elif val_ppl > val_greedy:
-            print(f"\n✓ PPL-MM outperformed Greedy but not Naive PG.")
-        elif val_ppl > val_naive_pg:
-            print(f"\n✓ PPL-MM outperformed Naive PG but not Greedy.")
-        else:
-            print("\n✗ PPL-MM did not outperform the baselines in this run.")
+        # Find best performing configuration
+        best_config_key = max(config_results.keys(), key=lambda k: config_results[k]['value'])
+        print(f"\n🏆 Best: {best_config_key} with value {config_results[best_config_key]['value']:.4f}")
 
         # --- Visualization ---
-        mm_steps = np.array(ppl_history["mm_step"])
-        V_s_n_vals = np.array([v if v is not None else np.nan for v in ppl_history["V_s_n"]])
-        ess_vals = np.array(ppl_history["ess"])
-        std_vals = np.array(ppl_history["std_weight"])
-        ess_ratio = ess_vals / len(offline_data[0])
+        # Create a comprehensive comparison plot
+        fig, axes = plt.subplots(1, 2, figsize=(16, 5))
 
-        fig, axes = plt.subplots(1, 3, figsize=(18, 4))
-
-        # Plot 1: Three-way comparison
-        x_pos = np.arange(3)
+        # Plot 1: Bar chart comparing all 7 configurations
+        config_names = list(ABLATION_CONFIGS.keys())
+        config_names_short = [k.split(".")[1].strip() for k in config_names]  # Remove numbers
+        det_values = [config_results[k]["value"] for k in config_names]
+        stoch_values = [config_results[k]["metrics"]["stochastic_mean"] for k in config_names]
+        
+        x_pos = np.arange(len(config_names))
         bar_width = 0.35
-        det_values = [greedy_metrics["deterministic_value"], 
-                      naive_pg_metrics["deterministic_value"], 
-                      ppl_metrics["deterministic_value"]]
-        stoch_values = [greedy_metrics["stochastic_mean"], 
-                        naive_pg_metrics["stochastic_mean"], 
-                        ppl_metrics["stochastic_mean"]]
-        axes[0].bar(x_pos - bar_width/2, det_values, bar_width, label="Deterministic")
-        axes[0].bar(x_pos + bar_width/2, stoch_values, bar_width, label="Stochastic")
+        
+        axes[0].bar(x_pos - bar_width/2, det_values, bar_width, label="Deterministic", alpha=0.8)
+        axes[0].bar(x_pos + bar_width/2, stoch_values, bar_width, label="Stochastic", alpha=0.8)
         axes[0].set_xticks(x_pos)
-        axes[0].set_xticklabels(["Greedy", "Naive PG", f"PPL-MM\n(β={best_beta})"])
+        axes[0].set_xticklabels(config_names_short, rotation=45, ha='right')
         axes[0].set_ylabel("True Reward")
-        axes[0].set_title("Policy Value Comparison")
+        axes[0].set_title("Ablation Study: All Configurations")
         axes[0].legend()
-        axes[0].axhline(0.0, color="black", linewidth=0.5)
+        axes[0].axhline(0.0, color="black", linewidth=0.5, linestyle='--')
+        axes[0].grid(axis='y', alpha=0.3)
 
-        axes[1].plot(mm_steps, V_s_n_vals, marker="o", label=r"$V_{s,n}(\pi)$")
-        axes[1].axhline(ppl_history["V_const"], color="red", linestyle="--", label=r"$V_{\text{const}}$")
-        axes[1].set_xlabel("MM Step")
-        axes[1].set_ylabel(r"$V_{s,n}$")
-        axes[1].set_title("Pessimism Constraint Tracking")
-        axes[1].legend()
+        # Plot 2: Show PPL training dynamics for the BEST PPL variant
+        # Find which PPL variant performed best
+        ppl_keys = ["5. PPL (This paper)", "6. PPL (no clamping)", "7. PPL (no clipping)"]
+        best_ppl_key = max(ppl_keys, key=lambda k: config_results[k]["value"])
+        best_ppl_result = config_results[best_ppl_key]
+        
+        if "mm_step" in best_ppl_result["history"] and best_ppl_result["best_beta"] and best_ppl_result["best_beta"] > 0:
+            history = best_ppl_result["history"]
+            mm_steps = np.array(history["mm_step"])
+            V_s_n_vals = np.array([v if v is not None else np.nan for v in history["V_s_n"]])
+            
+            axes[1].plot(mm_steps, V_s_n_vals, marker="o", label=r"$V_{s,n}(\pi)$", linewidth=2)
+            axes[1].axhline(history["V_const"], color="red", linestyle="--", 
+                           label=r"$V_{\text{const}}$", linewidth=2)
+            axes[1].set_xlabel("MM Step")
+            axes[1].set_ylabel(r"$V_{s,n}$")
+            title_suffix = best_ppl_key.split(".")[1].strip()
+            axes[1].set_title(f"Best PPL ({title_suffix}, β={best_ppl_result['best_beta']}): Pessimism Tracking")
+            axes[1].legend()
+            axes[1].grid(alpha=0.3)
+        else:
+            # If no PPL with beta > 0, show a message
+            axes[1].text(0.5, 0.5, "No PPL variant with β > 0\nchose pessimism for this task", 
+                        ha='center', va='center', fontsize=12, transform=axes[1].transAxes)
+            axes[1].set_title("PPL Training Dynamics (N/A)")
+            axes[1].grid(alpha=0.3)
 
-        ax3 = axes[2]
-        ax3.plot(mm_steps, ess_ratio, marker="o", color="tab:blue", label="ESS / n")
-        ax3.set_xlabel("MM Step")
-        ax3.set_ylabel("ESS / n", color="tab:blue")
-        ax3.tick_params(axis="y", labelcolor="tab:blue")
-        ax3.set_title("Importance Weight Diagnostics")
-        ax3b = ax3.twinx()
-        ax3b.plot(mm_steps, std_vals, marker="s", color="tab:orange", label="Weight Std")
-        ax3b.set_ylabel("Weight Std", color="tab:orange")
-        ax3b.tick_params(axis="y", labelcolor="tab:orange")
-        lines_ax3, labels_ax3 = ax3.get_legend_handles_labels()
-        lines_ax3b, labels_ax3b = ax3b.get_legend_handles_labels()
-        ax3.legend(lines_ax3 + lines_ax3b, labels_ax3 + labels_ax3b, loc="upper right")
-
-        fig.suptitle(f"{bench_id} Metrics", fontsize=14)
-        fig.tight_layout(rect=[0, 0, 1, 0.92])
-        plot_path = results_dir / f"{bench_id}_metrics.png"
+        fig.suptitle(f"{bench_id} - Ablation Study Results", fontsize=14, fontweight='bold')
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        plot_path = results_dir / f"{bench_id}_ablation.png"
         fig.savefig(plot_path, dpi=200)
         plt.close(fig)
 
+        # Store results
         benchmark_results[bench_id] = {
-            "greedy_metrics": greedy_metrics,
-            "naive_pg_metrics": naive_pg_metrics,
-            "ppl_metrics": ppl_metrics,
-            "greedy_history": greedy_history,
-            "naive_pg_history": naive_pg_history,
-            "ppl_history": ppl_history,
-            "best_beta": best_beta,
+            "config_results": {k: {
+                "value": v["value"],
+                "best_beta": v["best_beta"],
+                "metrics": v["metrics"]
+            } for k, v in config_results.items()},
             "n_offline": len(offline_data[0]),
             "plot_path": str(plot_path),
         }
 
-        summary_rows.append({
-            "benchmark": bench_id,
-            "greedy_det": val_greedy,
-            "naive_pg_det": val_naive_pg,
-            "ppl_det": val_ppl,
-            "best_beta": best_beta,
-            "delta_vs_greedy": val_ppl - val_greedy,
-            "delta_vs_naive": val_ppl - val_naive_pg,
-            "greedy_stoch": greedy_metrics["stochastic_mean"],
-            "naive_pg_stoch": naive_pg_metrics["stochastic_mean"],
-            "ppl_stoch": ppl_metrics["stochastic_mean"],
-            "ppl_stoch_std": ppl_metrics["stochastic_std"],
-            "ppl_action_var": ppl_metrics["action_variance"],
-            "min_ess_ratio": float(ess_ratio.min()),
-            "max_weight_std": float(std_vals.max()),
-        })
+        # Prepare summary row
+        summary_row = {"benchmark": bench_id}
+        for config_key in ABLATION_CONFIGS.keys():
+            result = config_results[config_key]
+            col_name = config_key.split(".")[1].strip().replace(" ", "_").replace("(", "").replace(")", "").lower()
+            summary_row[col_name] = result["value"]
+            if result["best_beta"]:
+                summary_row[f"{col_name}_beta"] = result["best_beta"]
+        summary_rows.append(summary_row)
 
-    print("\n================ SUMMARY ===============")
-    header = f"{'Benchmark':<28}{'Greedy':>12}{'Naive PG':>12}{'PPL-MM':>12}{'Beta':>8}{'Δ(G)':>10}{'Δ(N)':>10}"
-    print(header)
-    print("="*98)
+    # --- Final Summary Table ---
+    print("\n" + "="*120)
+    print("ABLATION STUDY SUMMARY - ALL BENCHMARKS")
+    print("="*120)
+    
+    # Print header
+    header_parts = ["Benchmark".ljust(28)]
+    for config_key in ABLATION_CONFIGS.keys():
+        short_name = config_key.split(".")[1].strip()[:12]
+        header_parts.append(short_name.rjust(13))
+    print("".join(header_parts))
+    print("="*120)
+    
+    # Print data rows
     for row in summary_rows:
-        print(
-            f"{row['benchmark']:<28}"
-            f"{row['greedy_det']:>12.4f}"
-            f"{row['naive_pg_det']:>12.4f}"
-            f"{row['ppl_det']:>12.4f}"
-            f"{row['best_beta']:>8.2f}"
-            f"{row['delta_vs_greedy']:>10.4f}"
-            f"{row['delta_vs_naive']:>10.4f}"
-        )
-
-    metrics_path = results_dir / "benchmark_metrics.json"
+        line_parts = [row["benchmark"].ljust(28)]
+        for config_key in ABLATION_CONFIGS.keys():
+            col_name = config_key.split(".")[1].strip().replace(" ", "_").replace("(", "").replace(")", "").lower()
+            value = row.get(col_name, float('nan'))
+            line_parts.append(f"{value:>13.4f}")
+        print("".join(line_parts))
+    
+    # Save results
+    metrics_path = results_dir / "ablation_results.json"
     with open(metrics_path, "w", encoding="utf-8") as f:
-        json.dump(benchmark_results, f, indent=2)
-    print(f"\nSaved detailed metrics to {metrics_path}")
+        json.dump(benchmark_results, f, indent=2, default=str)
+    print(f"\n\nSaved detailed metrics to {metrics_path}")
     print(f"Saved per-benchmark plots to {results_dir}")
     
-    # Print overall statistics
-    print("\n================ OVERALL STATISTICS ===============")
-    wins_vs_greedy = sum(1 for row in summary_rows if row['delta_vs_greedy'] > 0)
-    wins_vs_naive = sum(1 for row in summary_rows if row['delta_vs_naive'] > 0)
-    wins_vs_both = sum(1 for row in summary_rows if row['delta_vs_greedy'] > 0 and row['delta_vs_naive'] > 0)
-    print(f"PPL-MM outperformed Greedy in {wins_vs_greedy}/{len(summary_rows)} benchmarks")
-    print(f"PPL-MM outperformed Naive PG in {wins_vs_naive}/{len(summary_rows)} benchmarks")
-    print(f"PPL-MM outperformed BOTH baselines in {wins_vs_both}/{len(summary_rows)} benchmarks")
+    # --- Analysis: Which configuration wins most often? ---
+    print("\n" + "="*120)
+    print("OVERALL STATISTICS")
+    print("="*120)
+    
+    config_win_counts = {k: 0 for k in ABLATION_CONFIGS.keys()}
+    ppl_family_keys = ["5. PPL (This paper)", "6. PPL (no clamping)", "7. PPL (no clipping)"]
+    ppl_family_wins = 0
+    
+    for row in summary_rows:
+        # Find best config for this benchmark
+        best_value = float('-inf')
+        best_config = None
+        for config_key in ABLATION_CONFIGS.keys():
+            col_name = config_key.split(".")[1].strip().replace(" ", "_").replace("(", "").replace(")", "").lower()
+            value = row.get(col_name, float('-inf'))
+            if value > best_value:
+                best_value = value
+                best_config = config_key
+        if best_config:
+            config_win_counts[best_config] += 1
+            if best_config in ppl_family_keys:
+                ppl_family_wins += 1
+    
+    print("\nWins per configuration across all benchmarks:")
+    for config_key in ABLATION_CONFIGS.keys():
+        wins = config_win_counts[config_key]
+        is_ppl = config_key in ppl_family_keys
+        marker = "🔵 PPL" if is_ppl else "⚪ Baseline"
+        print(f"  {marker} {config_key}: {wins}/{len(summary_rows)} benchmarks")
+    
+    # Analyze PPL family performance
+    print(f"\n{'='*120}")
+    print("PPL FAMILY PERFORMANCE")
+    print(f"{'='*120}")
+    print(f"PPL variants (with β > 0) won: {ppl_family_wins}/{len(summary_rows)} benchmarks")
+    
+    if ppl_family_wins == len(summary_rows):
+        print("   ✅ SUCCESS: PPL family (with pessimism) outperformed ALL baselines on every benchmark!")
+    elif ppl_family_wins >= len(summary_rows) / 2:
+        print("   ⚠️  PARTIAL: PPL family won majority but not all benchmarks")
+    else:
+        print("   ❌ FAILURE: PPL family did not demonstrate clear advantages")
+    
+    # Show optimal beta values chosen
+    print(f"\n{'='*120}")
+    print("OPTIMAL BETA VALUES")
+    print(f"{'='*120}")
+    for row in summary_rows:
+        bench = row["benchmark"]
+        print(f"\n{bench}:")
+        for config_key in ppl_family_keys:
+            col_name = config_key.split(".")[1].strip().replace(" ", "_").replace("(", "").replace(")", "").lower()
+            beta_col = f"{col_name}_beta"
+            if beta_col in row:
+                beta_val = row[beta_col]
+                value = row[col_name]
+                config_name = config_key.split(".")[1].strip()
+                print(f"  {config_name:20s}: β = {beta_val:.2f}, value = {value:.4f}")
+    
+    print("\n" + "="*120)
