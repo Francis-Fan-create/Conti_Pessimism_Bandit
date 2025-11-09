@@ -44,7 +44,7 @@ sns.set_palette("husl")
 @dataclass
 class ExperimentConfig:
     """Configuration for statistical evaluation experiments."""
-    n_seeds: int = 5  # Number of random seeds per condition
+    n_seeds: int = 15  # Number of random seeds per condition
     n_offline_samples: int = 10000
     n_test_samples: int = 10000
     context_dim: int = 5
@@ -826,7 +826,7 @@ def main():
     
     # Configuration
     config = ExperimentConfig(
-        n_seeds=5,  # 5 runs per condition for good statistical power
+        n_seeds=15,  # 15 runs per condition for good statistical power
         n_offline_samples=10000,
         n_test_samples=10000,
         n_mm_steps=20,
